@@ -1,0 +1,16 @@
+{
+  "name": "pano-prototype",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "three": "^0.170.0",
+    "camera-controls": "^2.9.0"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}
