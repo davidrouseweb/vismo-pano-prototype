@@ -14,8 +14,21 @@ body {
   height: 100vh;
 }
 
-canvas {
+#app canvas {
   display: block;
+}
+
+#minimap {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 10;
+  width: 180px;
+  height: 180px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  cursor: pointer;
 }
 
 #ui {

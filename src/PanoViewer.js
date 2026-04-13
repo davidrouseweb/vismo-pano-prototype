@@ -56,6 +56,7 @@ export class PanoViewer {
     this._initCameras();
     this._initControls();
     this._initEvents();
+    this._initMinimap();
     this._animate();
   }
 
@@ -560,6 +561,135 @@ export class PanoViewer {
     } else {
       this.overviewControls.update(delta);
       this.renderer.render(this.scene, this.overviewCamera);
+    }
+
+    this._updateMinimap();
+  }
+
+  // ---------------------------------------------------------------
+  // Minimap
+  // ---------------------------------------------------------------
+
+  _initMinimap() {
+    this._minimap = document.getElementById('minimap');
+    if (!this._minimap) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const size = 180;
+    this._minimap.width = size * dpr;
+    this._minimap.height = size * dpr;
+    this._minimapCtx = this._minimap.getContext('2d');
+    this._minimapCtx.scale(dpr, dpr);
+    this._minimapSize = size;
+
+    this._minimap.addEventListener('click', (e) => this._onMinimapClick(e));
+  }
+
+  _updateMinimap() {
+    const ctx = this._minimapCtx;
+    if (!ctx || this.panos.size === 0) return;
+
+    const size = this._minimapSize;
+    const padding = 20;
+    const pointRadius = 5;
+    const activeRadius = 7;
+
+    // Clear
+    ctx.clearRect(0, 0, size, size);
+
+    // Compute bounds from pano positions (X and Z for top-down view)
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    this.panos.forEach((p) => {
+      minX = Math.min(minX, p.position.x);
+      maxX = Math.max(maxX, p.position.x);
+      minZ = Math.min(minZ, p.position.z);
+      maxZ = Math.max(maxZ, p.position.z);
+    });
+
+    // Add some margin so points don't sit on the edge
+    const rangeX = (maxX - minX) || 1;
+    const rangeZ = (maxZ - minZ) || 1;
+    const scale = (size - padding * 2) / Math.max(rangeX, rangeZ);
+
+    const toScreen = (pos) => ({
+      x: padding + (pos.x - minX) * scale + (size - padding * 2 - rangeX * scale) / 2,
+      y: padding + (pos.z - minZ) * scale + (size - padding * 2 - rangeZ * scale) / 2,
+    });
+
+    // Store screen positions for click detection
+    this._minimapPoints = [];
+
+    // Draw all points
+    this.panos.forEach((pano) => {
+      const sp = toScreen(pano.position);
+      const isActive = this.activePano && this.activePano.id === pano.id;
+
+      this._minimapPoints.push({ id: pano.id, x: sp.x, y: sp.y });
+
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, isActive ? activeRadius : pointRadius, 0, Math.PI * 2);
+
+      if (isActive) {
+        // Draw view cone behind the dot
+        if (this.mode === 'pano') {
+          const azimuth = this.panoControls.azimuthAngle;
+          // Camera-controls azimuth: 0 = looking in -Z. On minimap: -Z is down.
+          // Rotate so azimuth 0 points down (PI/2 offset), negate for screen coords.
+          const angle = -azimuth - Math.PI / 2;
+          const coneRadius = 22;
+          const coneSpread = Math.PI / 2.5; // ~72 degree FOV cone
+
+          ctx.beginPath();
+          ctx.moveTo(sp.x, sp.y);
+          ctx.arc(sp.x, sp.y, coneRadius, angle - coneSpread / 2, angle + coneSpread / 2);
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(0, 204, 255, 0.15)';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(0, 204, 255, 0.4)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+
+        // Active dot
+        ctx.beginPath();
+        ctx.arc(sp.x, sp.y, activeRadius, 0, Math.PI * 2);
+        ctx.fillStyle = '#00ccff';
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+        ctx.fill();
+      }
+    });
+  }
+
+  _onMinimapClick(e) {
+    if (!this._minimapPoints) return;
+
+    const rect = this._minimap.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // Find closest point within hit radius
+    let closest = null;
+    let closestDist = 15; // max click distance in px
+
+    for (const pt of this._minimapPoints) {
+      const dist = Math.hypot(pt.x - x, pt.y - y);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closest = pt;
+      }
+    }
+
+    if (!closest) return;
+
+    if (this.mode === 'pano') {
+      this.transitionTo(closest.id);
+    } else {
+      this.enterPano(closest.id);
     }
   }
 
