@@ -1,7 +1,8 @@
 import './style.css';
 import { PanoViewer } from './PanoViewer.js';
 
-const PANO_BASE_PATH = '/panos';
+// const PANO_BASE_PATH = '/panodata/Office2-2-rooms';
+const PANO_BASE_PATH = '/panodata/Office1-21-rooms';
 
 async function init() {
   const csvText = await fetch(`${PANO_BASE_PATH}/Office.csv`).then((r) => r.text());
