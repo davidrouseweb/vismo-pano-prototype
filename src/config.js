@@ -17,6 +17,9 @@ export const CONFIG = {
   discHoverOpacity: 0.8,
   discSinkY: 2, // how far below pano centre the discs sit
   discPulse: true, // subtle pulse animation on discs
+  discAutoHide: false, // when true, discs hidden until click, then fade out
+  discAutoHideDelay: 3000, // ms before discs start fading after click
+  discFadeDuration: 1000, // ms for fade-out animation
 
   // --- Sphere ---
   sphereRadius: 20,

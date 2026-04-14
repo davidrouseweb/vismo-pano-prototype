@@ -13,6 +13,10 @@ export class PanoViewer {
     this.mode = 'overview'; // 'overview' | 'pano'
     this._transition = null;
     this._hoveredDisc = null;
+    this._discAutoHide = CONFIG.discAutoHide;
+    this._discAutoHideTimer = null;
+    this._discFading = false;
+    this._discFadeStart = 0;
 
     this.clock = new THREE.Clock();
     this.raycaster = new THREE.Raycaster();
@@ -117,13 +121,37 @@ export class PanoViewer {
       this.renderer.setSize(w, h);
     });
 
-    this.renderer.domElement.addEventListener('click', (e) => this._onClick(e));
+    this.renderer.domElement.addEventListener('pointerdown', (e) => {
+      this._pointerDownPos = { x: e.clientX, y: e.clientY };
+    });
+    this.renderer.domElement.addEventListener('click', (e) => {
+      // Ignore clicks that were drags (mouse moved more than 5px)
+      if (this._pointerDownPos) {
+        const dx = e.clientX - this._pointerDownPos.x;
+        const dy = e.clientY - this._pointerDownPos.y;
+        if (dx * dx + dy * dy > 25) return;
+      }
+      this._onClick(e);
+    });
     this.renderer.domElement.addEventListener('mousemove', (e) =>
       this._onMouseMove(e),
     );
     document
       .getElementById('back-btn')
       .addEventListener('click', () => this.exitPano());
+    document
+      .getElementById('disc-autohide-cb')
+      .addEventListener('change', (e) => {
+        this._discAutoHide = e.target.checked;
+        if (this.mode === 'pano') {
+          if (this._discAutoHide) {
+            this._hideDiscs();
+          } else {
+            this._cancelDiscFade();
+            this._showDiscs();
+          }
+        }
+      });
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && this.mode === 'pano') this.exitPano();
     });
@@ -255,6 +283,11 @@ export class PanoViewer {
 
     document.getElementById('info').textContent = `Viewing: ${pano.filename}`;
     document.getElementById('back-btn').style.display = 'block';
+    document.getElementById('disc-toggle').style.display = 'flex';
+
+    if (this._discAutoHide) {
+      this._hideDiscs();
+    }
   }
 
   exitPano() {
@@ -262,6 +295,7 @@ export class PanoViewer {
 
     this.mode = 'overview';
     this.activePano = null;
+    this._cancelDiscFade();
 
     this.pointsGroup.visible = true;
     this.gridHelper.visible = true;
@@ -276,6 +310,7 @@ export class PanoViewer {
     document.getElementById('info').textContent =
       'Click a point to enter 360 view';
     document.getElementById('back-btn').style.display = 'none';
+    document.getElementById('disc-toggle').style.display = 'none';
   }
 
   // ================================================================
@@ -367,6 +402,10 @@ export class PanoViewer {
     this.panoControls.enabled = true;
 
     this._createNavigationDiscs(t.to);
+
+    if (this._discAutoHide) {
+      this._hideDiscs();
+    }
 
     document.getElementById('info').textContent = `Viewing: ${t.to.filename}`;
   }
@@ -472,6 +511,54 @@ export class PanoViewer {
     this._hoveredDisc = null;
   }
 
+  _showDiscs() {
+    this.discGroup.visible = true;
+    this._discFading = false;
+    // Reset ring opacity to base
+    this.discGroup.children.forEach((disc) => {
+      disc.children[0].material.opacity = CONFIG.discOutlineOpacity;
+      disc.children[1].material.opacity = CONFIG.discOpacity;
+    });
+  }
+
+  _hideDiscs() {
+    this.discGroup.visible = false;
+    this._discFading = false;
+  }
+
+  _showDiscsTemporarily() {
+    this._cancelDiscFade();
+    this._showDiscs();
+    this._discAutoHideTimer = setTimeout(() => {
+      this._discFading = true;
+      this._discFadeStart = performance.now();
+    }, CONFIG.discAutoHideDelay);
+  }
+
+  _cancelDiscFade() {
+    if (this._discAutoHideTimer) {
+      clearTimeout(this._discAutoHideTimer);
+      this._discAutoHideTimer = null;
+    }
+    this._discFading = false;
+  }
+
+  _updateDiscFade() {
+    if (!this._discFading) return;
+
+    const elapsed = performance.now() - this._discFadeStart;
+    const progress = Math.min(elapsed / CONFIG.discFadeDuration, 1);
+
+    this.discGroup.children.forEach((disc) => {
+      disc.children[0].material.opacity = CONFIG.discOutlineOpacity * (1 - progress);
+      disc.children[1].material.opacity = CONFIG.discOpacity * (1 - progress);
+    });
+
+    if (progress >= 1) {
+      this._hideDiscs();
+    }
+  }
+
   // ---------------------------------------------------------------
   // Interaction
   // ---------------------------------------------------------------
@@ -492,14 +579,55 @@ export class PanoViewer {
         if (panoId) this.enterPano(panoId);
       }
     } else if (this.mode === 'pano') {
-      const hits = this.raycaster.intersectObjects(
+      // Auto-hide mode: show discs on click if hidden
+      if (this._discAutoHide && !this.discGroup.visible) {
+        this._showDiscsTemporarily();
+        return;
+      }
+
+      const discHits = this.raycaster.intersectObjects(
         this.discGroup.children,
         true,
       );
-      if (hits.length > 0) {
-        const disc = hits[0].object.parent;
+      if (discHits.length > 0) {
+        const disc = discHits[0].object.parent;
         const targetId = disc.userData.targetPanoId;
         if (targetId) this.transitionTo(targetId);
+        return;
+      }
+
+      // Auto-hide mode: clicking empty space with discs visible — hide them
+      if (this._discAutoHide && this.discGroup.visible) {
+        this._cancelDiscFade();
+        this._hideDiscs();
+        return;
+      }
+
+      // Clicked empty space — find the closest pano in the click direction
+      const sphereHits = this.raycaster.intersectObject(
+        this.activePano.sphere,
+        false,
+      );
+      if (sphereHits.length > 0) {
+        const clickPoint = sphereHits[0].point;
+        const currentPos = this.activePano.position;
+        const clickDir = new THREE.Vector3().subVectors(clickPoint, currentPos).normalize();
+
+        let closest = null;
+        let bestScore = -Infinity;
+
+        for (const [id, pano] of this.panos) {
+          if (id === this.activePano.id) continue;
+          const panoDir = new THREE.Vector3().subVectors(pano.position, currentPos).normalize();
+          const dot = clickDir.dot(panoDir);
+          // Only consider panos roughly in the click direction
+          if (dot > 0.3 && dot > bestScore) {
+            bestScore = dot;
+            closest = pano;
+          }
+        }
+
+        if (closest) this.transitionTo(closest.id);
       }
     }
   }
@@ -555,8 +683,11 @@ export class PanoViewer {
     // Run transition if active
     this._updateTransition();
 
+    // Fade out discs in auto-hide mode
+    this._updateDiscFade();
+
     // Pulse navigation discs
-    if (this.mode === 'pano' && CONFIG.discPulse && !this._transition) {
+    if (this.mode === 'pano' && CONFIG.discPulse && !this._transition && !this._discFading) {
       const time = this.clock.getElapsedTime();
       const pulse = CONFIG.discOpacity + Math.sin(time * 2) * 0.05;
       this.discGroup.children.forEach((disc) => {
