@@ -133,10 +133,20 @@ export class PanoViewer {
   // Data loading
   // ---------------------------------------------------------------
 
-  loadPanos(panoData) {
+  async loadPanos(panoData) {
     const loader = new THREE.TextureLoader();
 
-    for (const data of panoData) {
+    // Load all textures in parallel
+    const texturePromises = panoData.map((data) =>
+      new Promise((resolve) => {
+        loader.load(`${this.basePath}/${data.filename}`, resolve);
+      }),
+    );
+    const textures = await Promise.all(texturePromises);
+
+    for (let i = 0; i < panoData.length; i++) {
+      const data = panoData[i];
+      const texture = textures[i];
       const id = data.filename;
       const position = new THREE.Vector3(
         data.position.x,
@@ -161,7 +171,6 @@ export class PanoViewer {
       );
       sphereGeo.scale(-1, 1, 1); // invert for viewing from inside
 
-      const texture = loader.load(`${this.basePath}/${data.filename}`);
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.offset.x = CONFIG.textureOffsetX;
       texture.wrapS = THREE.RepeatWrapping;
@@ -349,14 +358,13 @@ export class PanoViewer {
     this.activePano = t.to;
     this._transition = null;
 
+    // Set orbit point first, then move — avoids a one-frame camera jump
     const pos = t.to.position;
     const EPS = 1e-5;
+    this.panoControls.setOrbitPoint(pos.x, pos.y, pos.z);
+    this.panoControls.setFocalOffset(0, 0, 0);
     this.panoControls.moveTo(pos.x, pos.y, pos.z + EPS, false);
     this.panoControls.enabled = true;
-    requestAnimationFrame(() => {
-      this.panoControls.setOrbitPoint(pos.x, pos.y, pos.z);
-      this.panoControls.setFocalOffset(0, 0, 0);
-    });
 
     this._createNavigationDiscs(t.to);
 

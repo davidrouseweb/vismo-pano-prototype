@@ -10,7 +10,7 @@ async function init() {
 
   const container = document.getElementById('app');
   const viewer = new PanoViewer(container, { basePath: PANO_BASE_PATH });
-  viewer.loadPanos(panoData);
+  await viewer.loadPanos(panoData);
 }
 
 function parseCsv(csvText) {
