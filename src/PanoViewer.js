@@ -1,41 +1,8 @@
 import * as THREE from 'three';
 import CameraControls from 'camera-controls';
+import { CONFIG } from './config.js';
 
 CameraControls.install({ THREE });
-
-// ================================================================
-// CONFIGURATION — tweak these values to prototype ideas
-// ================================================================
-const CONFIG = {
-  // --- Transition (prototyping area #1) ---
-  animateTransitions: true,
-  transitionDuration: 800, // ms
-
-  // --- Disc styling (prototyping area #2) ---
-  discRadius: 1,
-  discSegments: 32,
-  discColor: 0xffffff,
-  discOpacity: 0.2,
-  discHoverOpacity: 0.5,
-  discHoverScale: 1.3,
-  discSinkY: 2, // how far below pano centre the discs sit
-  discPulse: true, // subtle pulse animation on discs
-
-  // --- Sphere ---
-  sphereRadius: 20,
-  sphereWidthSegments: 128,
-  sphereHeightSegments: 64,
-  textureOffsetX: 0.5, // Trimble: 0.5, Leica: 0.75
-
-  // --- Pano camera ---
-  fov: 75,
-  rotateSpeed: -0.3,
-  zoomMin: 0.5,
-  zoomMax: 5,
-  smoothTime: 0.1,
-};
-
-// ================================================================
 
 export class PanoViewer {
   constructor(container, options = {}) {
@@ -411,13 +378,31 @@ export class PanoViewer {
     this.panos.forEach((pano) => {
       if (pano.id === currentPano.id) return;
 
-      const geo = new THREE.CircleGeometry(
+      // Thin dark outline (1px line around the outer edge)
+      const outlinePoints = [];
+      for (let i = 0; i <= CONFIG.discSegments; i++) {
+        const angle = (i / CONFIG.discSegments) * Math.PI * 2;
+        outlinePoints.push(new THREE.Vector3(
+          Math.cos(angle) * CONFIG.discRadius,
+          Math.sin(angle) * CONFIG.discRadius,
+          0,
+        ));
+      }
+      const outlineGeo = new THREE.BufferGeometry().setFromPoints(outlinePoints);
+      const outlineMat = new THREE.LineBasicMaterial({
+        color: CONFIG.discOutlineColor,
+        transparent: true,
+        opacity: CONFIG.discOutlineOpacity,
+        depthTest: false,
+      });
+
+      // Visible white ring outline
+      const ringGeo = new THREE.RingGeometry(
+        CONFIG.discRadius - CONFIG.discRingWidth,
         CONFIG.discRadius,
         CONFIG.discSegments,
       );
-
-      // ---- Disc material — change this to restyle discs ----
-      const mat = new THREE.MeshBasicMaterial({
+      const ringMat = new THREE.MeshBasicMaterial({
         color: CONFIG.discColor,
         transparent: true,
         opacity: CONFIG.discOpacity,
@@ -425,7 +410,25 @@ export class PanoViewer {
         depthTest: false,
       });
 
-      const disc = new THREE.Mesh(geo, mat);
+      // Invisible solid hit area for hover/click
+      const hitGeo = new THREE.CircleGeometry(
+        CONFIG.discRadius,
+        CONFIG.discSegments,
+      );
+      const hitMat = new THREE.MeshBasicMaterial({
+        visible: false,
+        side: THREE.DoubleSide,
+        depthTest: false,
+      });
+
+      const disc = new THREE.Group();
+      const outline = new THREE.LineLoop(outlineGeo, outlineMat);
+      outline.raycast = () => {}; // exclude from raycasting — lines have a fat hit threshold
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      const hitArea = new THREE.Mesh(hitGeo, hitMat);
+      disc.add(outline);
+      disc.add(ring);
+      disc.add(hitArea);
 
       // Position at target pano location, sunk below centre
       disc.position.set(
@@ -452,8 +455,10 @@ export class PanoViewer {
   _clearNavigationDiscs() {
     while (this.discGroup.children.length > 0) {
       const disc = this.discGroup.children[0];
-      disc.geometry.dispose();
-      disc.material.dispose();
+      disc.children.forEach((child) => {
+        child.geometry.dispose();
+        child.material.dispose();
+      });
       this.discGroup.remove(disc);
     }
     this._hoveredDisc = null;
@@ -484,7 +489,8 @@ export class PanoViewer {
         true,
       );
       if (hits.length > 0) {
-        const targetId = hits[0].object.userData.targetPanoId;
+        const disc = hits[0].object.parent;
+        const targetId = disc.userData.targetPanoId;
         if (targetId) this.transitionTo(targetId);
       }
     }
@@ -505,8 +511,7 @@ export class PanoViewer {
     } else if (this.mode === 'pano') {
       // Reset previously hovered disc
       if (this._hoveredDisc) {
-        this._hoveredDisc.material.opacity = CONFIG.discOpacity;
-        this._hoveredDisc.scale.setScalar(1);
+        this._hoveredDisc.children[1].material.opacity = CONFIG.discOpacity;
         this._hoveredDisc = null;
       }
 
@@ -515,9 +520,8 @@ export class PanoViewer {
         true,
       );
       if (hits.length > 0) {
-        const disc = hits[0].object;
-        disc.material.opacity = CONFIG.discHoverOpacity;
-        disc.scale.setScalar(CONFIG.discHoverScale);
+        const disc = hits[0].object.parent;
+        disc.children[1].material.opacity = CONFIG.discHoverOpacity;
         this._hoveredDisc = disc;
         canvas.style.cursor = 'pointer';
       } else {
@@ -549,7 +553,7 @@ export class PanoViewer {
       const pulse = CONFIG.discOpacity + Math.sin(time * 2) * 0.05;
       this.discGroup.children.forEach((disc) => {
         if (disc !== this._hoveredDisc) {
-          disc.material.opacity = pulse;
+          disc.children[1].material.opacity = pulse;
         }
       });
     }
